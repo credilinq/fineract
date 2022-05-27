@@ -1,0 +1,76 @@
+# This is the GitHub Action which
+# automatically updates Credilinq's live Fineract instance
+#
+# see https://jira.apache.org/jira/browse/FINERACT-970
+# https://github.com/marketplace/actions/setup-gcloud-environment
+# and http://blog2.vorburger.ch/2020/05/fineractdev-cicd-from-github-to-google.html
+#
+# Created by Audrey Ndum for Credilinq in May 2022.
+#
+
+name: Deploy to Credilinq-Fineract live
+
+on:
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+          cache: gradle
+      - name: Build the image
+        run: ./gradlew :fineract-provider:clean :fineract-provider:jibDockerBuild -x test
+      # - name: Start the stack
+      #   run: docker-compose up -d
+      # - name: Wait for stack to come up
+      #   run: sleep 60
+      # - name: Check health
+      #   run: curl -f -k --retry 5 --retry-connrefused --connect-timeout 30 --retry-delay 30 https://localhost:8443/fineract-provider/actuator/health
+      # - name: Check info
+      #   run: (( $(curl -f -k --retry 5 --retry-connrefused --connect-timeout 30 --retry-delay 30 https://localhost:8443/fineract-provider/actuator/info | wc --chars) > 100 ))
+      - name: Login to DockerHub
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          docker login -u $DOCKER_USER -p $DOCKER_PASSWORD
+      - name: Build the Docker Image
+        run: |
+          ls
+          docker build . --file Dockerfile --tag cadreia/credilinq-fineract
+      - name: Push to Docker Hub
+        run: docker push cadreia/credilinq-fineract
+
+  deploy:
+    name: Deploy to Instance
+    if: github.repository == 'credilinq/fineract'
+    runs-on: ubuntu-latest
+    needs: build     
+
+    steps:
+      - name: Executing remote ssh commands
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_AWS_SERVER_IP }}
+          username: ${{ secrets.SSH_SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            export JAVA_HOME=/opt/jdk-17.0.1
+            export PATH=$PATH:$JAVA_HOME/bin
+            docker stop credilinq-fineract
+            docker container rm credilinq-fineract
+            docker pull cadreia/credilinq-fineract
+            docker run -d --name credilinq-fineract --network="host" cadreia/credilinq-fineract
