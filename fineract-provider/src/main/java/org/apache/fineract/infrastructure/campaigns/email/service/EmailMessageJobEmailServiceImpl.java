@@ -48,14 +48,7 @@ public final class EmailMessageJobEmailServiceImpl implements EmailMessageJobEma
     public void sendEmailWithAttachment(EmailMessageWithAttachmentData emailMessageWithAttachmentData) {
         final SMTPCredentialsData smtpCredentialsData = this.externalServicesReadPlatformService.getSMTPCredentials();
         try {
-            JavaMailSenderImpl javaMailSenderImpl = new JavaMailSenderImpl();
-            javaMailSenderImpl.setHost(smtpCredentialsData.getHost());
-            javaMailSenderImpl.setPort(Integer.parseInt(smtpCredentialsData.getPort()));
-            javaMailSenderImpl.setUsername(smtpCredentialsData.getUsername());
-            javaMailSenderImpl.setPassword(smtpCredentialsData.getPassword());
-            javaMailSenderImpl
-                    .setJavaMailProperties(this.getJavaMailProperties(smtpCredentialsData, javaMailSenderImpl.getJavaMailProperties()));
-
+            JavaMailSenderImpl javaMailSenderImpl = this.setupBaseEmailConfig(smtpCredentialsData);
             MimeMessage mimeMessage = javaMailSenderImpl.createMimeMessage();
 
             // use the true flag to indicate you need a multipart message
@@ -80,6 +73,18 @@ public final class EmailMessageJobEmailServiceImpl implements EmailMessageJobEma
             LOG.error("Could not send emai Problem occurred in sendEmailWithAttachment function", e);
         }
 
+    }
+
+    @Override
+    public JavaMailSenderImpl setupBaseEmailConfig(SMTPCredentialsData smtpCredentialsData) {
+        JavaMailSenderImpl javaMailSenderImpl = new JavaMailSenderImpl();
+        javaMailSenderImpl.setHost(smtpCredentialsData.getHost());
+        javaMailSenderImpl.setPort(Integer.parseInt(smtpCredentialsData.getPort()));
+        javaMailSenderImpl.setUsername(smtpCredentialsData.getUsername());
+        javaMailSenderImpl.setPassword(smtpCredentialsData.getPassword());
+        javaMailSenderImpl
+                .setJavaMailProperties(this.getJavaMailProperties(smtpCredentialsData, javaMailSenderImpl.getJavaMailProperties()));
+        return javaMailSenderImpl;
     }
 
     private Properties getJavaMailProperties(SMTPCredentialsData smtpCredentialsData, Properties properties) {

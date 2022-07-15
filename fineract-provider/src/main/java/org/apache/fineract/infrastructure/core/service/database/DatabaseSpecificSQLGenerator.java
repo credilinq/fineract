@@ -117,6 +117,14 @@ public class DatabaseSpecificSQLGenerator {
         }
     }
 
+    public String addDate(String date, String multiplier, String unit) {
+        if (databaseTypeResolver.isMySQL()) {
+            return format("DATE_ADD(%s, INTERVAL %s %s)", date, multiplier, unit);
+        } else {
+            throw new IllegalStateException("Database type is not supported for subtracting date " + databaseTypeResolver.databaseType());
+        }
+    }
+
     public String dateDiff(String date1, String date2) {
         if (databaseTypeResolver.isMySQL()) {
             return format("DATEDIFF(%s, %s)", date1, date2);

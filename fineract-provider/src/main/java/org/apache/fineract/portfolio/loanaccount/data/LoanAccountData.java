@@ -1953,4 +1953,7 @@ public final class LoanAccountData {
         return this.status.value();
     }
 
+    public CurrencyData getCurrency() {
+        return currency;
+    }
 }

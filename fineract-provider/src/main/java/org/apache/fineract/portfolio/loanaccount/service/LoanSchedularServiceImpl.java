@@ -19,6 +19,8 @@
 package org.apache.fineract.portfolio.loanaccount.service;
 
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -31,7 +33,10 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import org.apache.fineract.infrastructure.campaigns.email.service.EmailMessageJobEmailService;
+import org.apache.fineract.infrastructure.configuration.data.SMTPCredentialsData;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
+import org.apache.fineract.infrastructure.configuration.service.ExternalServicesPropertiesReadPlatformService;
 import org.apache.fineract.infrastructure.core.data.ApiParameterError;
 import org.apache.fineract.infrastructure.core.exception.AbstractPlatformDomainRuleException;
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
@@ -42,15 +47,23 @@ import org.apache.fineract.infrastructure.jobs.service.JobName;
 import org.apache.fineract.organisation.office.data.OfficeData;
 import org.apache.fineract.organisation.office.exception.OfficeNotFoundException;
 import org.apache.fineract.organisation.office.service.OfficeReadPlatformService;
+import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
+import org.apache.fineract.portfolio.loanaccount.data.LoanAccountData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
+import org.apache.fineract.portfolio.loanaccount.loanschedule.data.SoonToBeDueLoanScheduleData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+
+import javax.mail.MessagingException;
+import javax.mail.internet.MimeMessage;
 
 @Service
 public class LoanSchedularServiceImpl implements LoanSchedularService {
@@ -62,16 +75,24 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     private final LoanReadPlatformService loanReadPlatformService;
     private final LoanWritePlatformService loanWritePlatformService;
     private final OfficeReadPlatformService officeReadPlatformService;
+    private final ClientReadPlatformService clientReadPlatformService;
     private final ApplicationContext applicationContext;
+    private final ExternalServicesPropertiesReadPlatformService externalServicesPropertiesReadPlatformService;
+    private final EmailMessageJobEmailService emailMessageJobEmailService;
 
     @Autowired
     public LoanSchedularServiceImpl(final ConfigurationDomainService configurationDomainService,
             final LoanReadPlatformService loanReadPlatformService, final LoanWritePlatformService loanWritePlatformService,
-            final OfficeReadPlatformService officeReadPlatformService, final ApplicationContext applicationContext) {
+            final OfficeReadPlatformService officeReadPlatformService, final ClientReadPlatformService clientReadPlatformService,
+            final ApplicationContext applicationContext, final ExternalServicesPropertiesReadPlatformService externalServicesPropertiesReadPlatformService,
+            final EmailMessageJobEmailService emailMessageJobEmailService) {
         this.configurationDomainService = configurationDomainService;
         this.loanReadPlatformService = loanReadPlatformService;
         this.loanWritePlatformService = loanWritePlatformService;
         this.officeReadPlatformService = officeReadPlatformService;
+        this.clientReadPlatformService = clientReadPlatformService;
+        this.externalServicesPropertiesReadPlatformService = externalServicesPropertiesReadPlatformService;
+        this.emailMessageJobEmailService = emailMessageJobEmailService;
         this.applicationContext = applicationContext;
     }
 
@@ -307,6 +328,79 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
             LOG.error("Interrupted while posting IR entries", e1);
         } catch (ExecutionException e2) {
             LOG.error("Execution exception while posting IR entries", e2);
+        }
+    }
+
+    @Override
+    @CronTarget(jobName = JobName.SEND_EMAIL_FOR_DUE_LOAN_INSTALLMENT)
+    public void sendEmailForSoonDueLoans() throws JobExecutionException {
+
+        // 1. Get All Loans with installments due in the next 3 days
+        final int priorDays = 3;
+        final Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithSoonDueInstallments(priorDays);
+
+        // 2. Get email address of clients with those loans
+        List<Throwable> exceptions = new ArrayList<>();
+        if (!soonToBeDueLoanScheduleInstallments.isEmpty()) {
+            for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
+                Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
+                String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
+
+                // 3. Send email to each email address
+                try {
+                    sendPlainEmail(emailAddress, soonToBeDueLoanScheduleInstallment);
+                } catch (final PlatformApiDataValidationException e) {
+                    final List<ApiParameterError> errors = e.getErrors();
+                    for (final ApiParameterError error : errors) {
+                        LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
+                                error.getDeveloperMessage(), e);
+                    }
+                    exceptions.add(e);
+                } catch (final AbstractPlatformDomainRuleException e) {
+                    LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
+                            e.getDefaultUserMessage(), e);
+                    exceptions.add(e);
+                } catch (Exception e) {
+                    LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId, e);
+                    exceptions.add(e);
+                }
+            }
+            if (!exceptions.isEmpty()) {
+                throw new JobExecutionException(exceptions);
+            }
+        }
+    }
+
+    public void sendPlainEmail(String emailAddress, SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment) {
+        final SMTPCredentialsData smtpCredentialsData = this.externalServicesPropertiesReadPlatformService.getSMTPCredentials();
+        try {
+            JavaMailSenderImpl javaMailSenderImpl = emailMessageJobEmailService.setupBaseEmailConfig(smtpCredentialsData);
+            MimeMessage mimeMessage = javaMailSenderImpl.createMimeMessage();
+
+            // use the true flag to indicate you need a multipart message
+            MimeMessageHelper mimeMessageHelper = new MimeMessageHelper(mimeMessage, false);
+
+            LoanAccountData loanAccountData = this.loanReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getLoanId());
+            String clientName = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getDisplayName();
+            String loanAccountNumber = loanAccountData.getAccountNo();
+            String currencyCode = loanAccountData.getCurrency().getCode();
+            String dueDate = soonToBeDueLoanScheduleInstallment.getDueDate();
+            BigDecimal principalDue = soonToBeDueLoanScheduleInstallment.getPrincipalOutstanding();
+            BigDecimal interestDue = soonToBeDueLoanScheduleInstallment.getInterestOutstanding();
+            BigDecimal totalDue = principalDue.add(interestDue);
+
+            mimeMessageHelper.setFrom(smtpCredentialsData.getFromEmail());
+            mimeMessageHelper.setTo(emailAddress);
+            mimeMessageHelper.setText("Repayment of " + totalDue + currencyCode  + " for " + clientName + " loan is soon due.\n\nLoan account: #" + loanAccountNumber + "\nDue date: " +
+                    dueDate + "\nPrincipal Due: " + principalDue + "\nInterest Due: " + interestDue, true);
+            mimeMessageHelper.setSubject("Upcoming Loan Repayment");
+
+            javaMailSenderImpl.send(mimeMessage);
+        }
+
+        catch (MessagingException e) {
+            // handle the exception
+            LOG.error("Problem occurred in sendPlainEmail function", e);
         }
     }
 }

@@ -42,6 +42,7 @@ import org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.LoanScheduleData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.LoanSchedulePeriodData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
+import org.apache.fineract.portfolio.loanaccount.loanschedule.data.SoonToBeDueLoanScheduleData;
 
 public interface LoanReadPlatformService {
 
@@ -152,4 +153,6 @@ public interface LoanReadPlatformService {
     List<LoanRepaymentScheduleInstallmentData> getRepaymentDataResponse(Long loanId);
 
     CollectionData retrieveLoanCollectionData(Long loanId);
+
+    Collection<SoonToBeDueLoanScheduleData> retrieveAllLoansWithSoonDueInstallments(Integer priorDays);
 }

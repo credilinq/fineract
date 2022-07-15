@@ -696,12 +696,20 @@ public final class ClientData implements Comparable<ClientData>, Serializable {
         return this.lastname;
     }
 
+    public String getDisplayName() {
+        return this.displayName;
+    }
+
     public LocalDate getActivationDate() {
         return this.activationDate;
     }
 
     public Boolean getIsAddressEnabled() {
         return this.isAddressEnabled;
+    }
+
+    public String getEmailAddress() {
+        return this.emailAddress;
     }
 
 }
