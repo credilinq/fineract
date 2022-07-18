@@ -456,6 +456,10 @@ public final class LoanAccountData {
         return loanProductName;
     }
 
+    public Integer getNumberOfRepayments() {
+        return numberOfRepayments;
+    }
+
     public static final Comparator<LoanAccountData> ClientNameComparator = new Comparator<LoanAccountData>() {
 
         @Override

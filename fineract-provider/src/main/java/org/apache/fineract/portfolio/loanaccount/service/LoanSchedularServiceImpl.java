@@ -18,6 +18,8 @@
  */
 package org.apache.fineract.portfolio.loanaccount.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
 
 import java.math.BigDecimal;
@@ -34,7 +36,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import org.apache.fineract.infrastructure.campaigns.email.service.EmailMessageJobEmailService;
-import org.apache.fineract.infrastructure.configuration.data.SMTPCredentialsData;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
 import org.apache.fineract.infrastructure.configuration.service.ExternalServicesPropertiesReadPlatformService;
 import org.apache.fineract.infrastructure.core.data.ApiParameterError;
@@ -42,6 +43,8 @@ import org.apache.fineract.infrastructure.core.exception.AbstractPlatformDomainR
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.service.ThreadLocalContextUtil;
 import org.apache.fineract.infrastructure.jobs.annotation.CronTarget;
+import org.apache.fineract.infrastructure.jobs.data.PostmarkRequestData;
+import org.apache.fineract.infrastructure.jobs.data.PostmarkModel;
 import org.apache.fineract.infrastructure.jobs.exception.JobExecutionException;
 import org.apache.fineract.infrastructure.jobs.service.JobName;
 import org.apache.fineract.organisation.office.data.OfficeData;
@@ -56,14 +59,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationContext;
 import org.springframework.dao.CannotAcquireLockException;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
-import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
-
-import javax.mail.MessagingException;
-import javax.mail.internet.MimeMessage;
+import org.springframework.web.client.RestTemplate;
 
 @Service
 public class LoanSchedularServiceImpl implements LoanSchedularService {
@@ -348,7 +349,7 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
 
                 // 3. Send email to each email address
                 try {
-                    sendPlainEmail(emailAddress, soonToBeDueLoanScheduleInstallment);
+                    sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment);
                 } catch (final PlatformApiDataValidationException e) {
                     final List<ApiParameterError> errors = e.getErrors();
                     for (final ApiParameterError error : errors) {
@@ -371,36 +372,36 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
         }
     }
 
-    public void sendPlainEmail(String emailAddress, SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment) {
-        final SMTPCredentialsData smtpCredentialsData = this.externalServicesPropertiesReadPlatformService.getSMTPCredentials();
+    public void sendEmailWithTemplate(String emailAddress, SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment) {
         try {
-            JavaMailSenderImpl javaMailSenderImpl = emailMessageJobEmailService.setupBaseEmailConfig(smtpCredentialsData);
-            MimeMessage mimeMessage = javaMailSenderImpl.createMimeMessage();
-
-            // use the true flag to indicate you need a multipart message
-            MimeMessageHelper mimeMessageHelper = new MimeMessageHelper(mimeMessage, false);
-
             LoanAccountData loanAccountData = this.loanReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getLoanId());
             String clientName = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getDisplayName();
             String loanAccountNumber = loanAccountData.getAccountNo();
             String currencyCode = loanAccountData.getCurrency().getCode();
             String dueDate = soonToBeDueLoanScheduleInstallment.getDueDate();
+            Integer periodNumber = soonToBeDueLoanScheduleInstallment.getPeriodNumber();
+            Integer numberOfRepayments = loanAccountData.getNumberOfRepayments();
             BigDecimal principalDue = soonToBeDueLoanScheduleInstallment.getPrincipalOutstanding();
             BigDecimal interestDue = soonToBeDueLoanScheduleInstallment.getInterestOutstanding();
             BigDecimal totalDue = principalDue.add(interestDue);
 
-            mimeMessageHelper.setFrom(smtpCredentialsData.getFromEmail());
-            mimeMessageHelper.setTo(emailAddress);
-            mimeMessageHelper.setText("Repayment of " + totalDue + currencyCode  + " for " + clientName + " loan is soon due.\n\nLoan account: #" + loanAccountNumber + "\nDue date: " +
-                    dueDate + "\nPrincipal Due: " + principalDue + "\nInterest Due: " + interestDue, true);
-            mimeMessageHelper.setSubject("Upcoming Loan Repayment");
+            PostmarkModel templateModel = new PostmarkModel(String.valueOf(totalDue), currencyCode, clientName, loanAccountNumber, String.valueOf(periodNumber),
+                    String.valueOf(numberOfRepayments), dueDate, String.valueOf(principalDue), String.valueOf(interestDue));
+            PostmarkRequestData postmarkRequestData = new PostmarkRequestData("support@credilinq.ai", emailAddress, "upcoming-repayment", templateModel);
 
-            javaMailSenderImpl.send(mimeMessage);
+            RestTemplate restTemplate = new RestTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Postmark-Server-Token", "f3d0a020-bfa2-4a21-9e7e-ba6f681203dc");
+            ObjectMapper mapper = new ObjectMapper();
+            HttpEntity<String> request = new HttpEntity<String>(mapper.writeValueAsString(postmarkRequestData), headers);
+
+            String url = "https://api.postmarkapp.com/email/withTemplate";
+            restTemplate.postForObject(url, request, PostmarkRequestData.class);
         }
 
-        catch (MessagingException e) {
+        catch (RuntimeException | JsonProcessingException e) {
             // handle the exception
-            LOG.error("Problem occurred in sendPlainEmail function", e);
+            LOG.error("Problem occurred in sendEmailWithTemplate function", e);
         }
     }
 }
