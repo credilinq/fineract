@@ -41,4 +41,17 @@
             <column name="is_mismatched_job" valueBoolean="true"/>
         </insert>
     </changeSet>
+    <changeSet author="fineract" id="2">
+        <insert tableName="c_configuration" >
+                <column name="id" valueNumeric="44"/>
+                <column name="name" value="days-prior-to-loan-repayment-due-date"/>
+                <column name="value" valueNumeric="3"/>
+                <column name="date_value"/>
+                <column name="string_value"/>
+                <column name="enabled" valueBoolean="true"/>
+                <column name="is_trap_door" valueBoolean="false"/>
+                <column name="description"
+                        value="Should always be enabled for scheduler job that sends client email notifications prior to loan repayment due date"/>
+            </insert>
+    </changeSet>
 </databaseChangeLog>

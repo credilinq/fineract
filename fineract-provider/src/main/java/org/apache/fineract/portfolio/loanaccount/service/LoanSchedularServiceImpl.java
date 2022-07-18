@@ -35,9 +35,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import org.apache.fineract.infrastructure.campaigns.email.service.EmailMessageJobEmailService;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
-import org.apache.fineract.infrastructure.configuration.service.ExternalServicesPropertiesReadPlatformService;
 import org.apache.fineract.infrastructure.core.data.ApiParameterError;
 import org.apache.fineract.infrastructure.core.exception.AbstractPlatformDomainRuleException;
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
@@ -78,22 +76,18 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     private final OfficeReadPlatformService officeReadPlatformService;
     private final ClientReadPlatformService clientReadPlatformService;
     private final ApplicationContext applicationContext;
-    private final ExternalServicesPropertiesReadPlatformService externalServicesPropertiesReadPlatformService;
-    private final EmailMessageJobEmailService emailMessageJobEmailService;
+
 
     @Autowired
     public LoanSchedularServiceImpl(final ConfigurationDomainService configurationDomainService,
             final LoanReadPlatformService loanReadPlatformService, final LoanWritePlatformService loanWritePlatformService,
             final OfficeReadPlatformService officeReadPlatformService, final ClientReadPlatformService clientReadPlatformService,
-            final ApplicationContext applicationContext, final ExternalServicesPropertiesReadPlatformService externalServicesPropertiesReadPlatformService,
-            final EmailMessageJobEmailService emailMessageJobEmailService) {
+            final ApplicationContext applicationContext) {
         this.configurationDomainService = configurationDomainService;
         this.loanReadPlatformService = loanReadPlatformService;
         this.loanWritePlatformService = loanWritePlatformService;
         this.officeReadPlatformService = officeReadPlatformService;
         this.clientReadPlatformService = clientReadPlatformService;
-        this.externalServicesPropertiesReadPlatformService = externalServicesPropertiesReadPlatformService;
-        this.emailMessageJobEmailService = emailMessageJobEmailService;
         this.applicationContext = applicationContext;
     }
 
@@ -335,39 +329,39 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     @Override
     @CronTarget(jobName = JobName.SEND_EMAIL_FOR_DUE_LOAN_INSTALLMENT)
     public void sendEmailForSoonDueLoans() throws JobExecutionException {
+        if (this.configurationDomainService.isPriorDaysToRepaymentDueEnabled()) {
+            // 1. Get All loans with installments due in the next "PriorDaysToRepaymentDue"
+            final Long priorDays = this.configurationDomainService.retrievePriorDaysToRepaymentDueEnabled();
+            final Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithSoonDueInstallments(priorDays.intValue());
 
-        // 1. Get All Loans with installments due in the next 3 days
-        final int priorDays = 3;
-        final Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithSoonDueInstallments(priorDays);
+            // Get email address of clients with corresponding loans
+            List<Throwable> exceptions = new ArrayList<>();
+            if (!soonToBeDueLoanScheduleInstallments.isEmpty()) {
+                for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
+                    Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
+                    String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
 
-        // 2. Get email address of clients with those loans
-        List<Throwable> exceptions = new ArrayList<>();
-        if (!soonToBeDueLoanScheduleInstallments.isEmpty()) {
-            for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
-                Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
-                String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
-
-                // 3. Send email to each email address
-                try {
-                    sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment);
-                } catch (final PlatformApiDataValidationException e) {
-                    final List<ApiParameterError> errors = e.getErrors();
-                    for (final ApiParameterError error : errors) {
+                    try {
+                        sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment);
+                    } catch (final PlatformApiDataValidationException e) {
+                        final List<ApiParameterError> errors = e.getErrors();
+                        for (final ApiParameterError error : errors) {
+                            LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
+                                    error.getDeveloperMessage(), e);
+                        }
+                        exceptions.add(e);
+                    } catch (final AbstractPlatformDomainRuleException e) {
                         LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
-                                error.getDeveloperMessage(), e);
+                                e.getDefaultUserMessage(), e);
+                        exceptions.add(e);
+                    } catch (Exception e) {
+                        LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId, e);
+                        exceptions.add(e);
                     }
-                    exceptions.add(e);
-                } catch (final AbstractPlatformDomainRuleException e) {
-                    LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
-                            e.getDefaultUserMessage(), e);
-                    exceptions.add(e);
-                } catch (Exception e) {
-                    LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId, e);
-                    exceptions.add(e);
                 }
-            }
-            if (!exceptions.isEmpty()) {
-                throw new JobExecutionException(exceptions);
+                if (!exceptions.isEmpty()) {
+                    throw new JobExecutionException(exceptions);
+                }
             }
         }
     }
