@@ -47,7 +47,8 @@ public enum JobName {
                                                                                                                                                                                                     "Update Email Outbound with campaign message"), EXECUTE_EMAIL(
                                                                                                                                                                                                             "Execute Email"), UPDATE_TRAIL_BALANCE_DETAILS(
                                                                                                                                                                                                                     "Update Trial Balance Details"), EXECUTE_DIRTY_JOBS(
-                                                                                                                                                                                                                            "Execute All Dirty Jobs");
+                                                                                                                                                                                                                            "Execute All Dirty Jobs"), SEND_EMAIL_FOR_DUE_LOAN_INSTALLMENT(
+                                                                                                                                                                                                                                    "Email Client for Due Loans");
 
     private final String name;
 

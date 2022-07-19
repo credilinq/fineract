@@ -16,18 +16,24 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-package org.apache.fineract.portfolio.loanaccount.service;
+package org.apache.fineract.infrastructure.jobs.data;
 
-import java.util.Map;
-import org.apache.fineract.infrastructure.jobs.exception.JobExecutionException;
+public class PostmarkRequestData {
+    public String From;
 
-public interface LoanSchedularService {
+    public String To;
 
-    void applyChargeForOverdueLoans() throws JobExecutionException;
+    public String TemplateAlias;
 
-    void recalculateInterest() throws JobExecutionException;
+    public PostmarkModel TemplateModel;
 
-    void recalculateInterest(@SuppressWarnings("unused") Map<String, String> jobParameters);
+    public PostmarkRequestData() {
+    }
 
-    void sendEmailForSoonDueLoans() throws JobExecutionException;
+    public PostmarkRequestData(String From, String To, String TemplateAlias, PostmarkModel TemplateModel) {
+        this.From = From;
+        this.To = To;
+        this.TemplateAlias = TemplateAlias;
+        this.TemplateModel = TemplateModel;
+    }
 }

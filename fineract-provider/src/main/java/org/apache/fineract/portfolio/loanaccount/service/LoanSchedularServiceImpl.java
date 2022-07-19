@@ -18,7 +18,11 @@
  */
 package org.apache.fineract.portfolio.loanaccount.service;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+
+import java.math.BigDecimal;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -37,20 +41,29 @@ import org.apache.fineract.infrastructure.core.exception.AbstractPlatformDomainR
 import org.apache.fineract.infrastructure.core.exception.PlatformApiDataValidationException;
 import org.apache.fineract.infrastructure.core.service.ThreadLocalContextUtil;
 import org.apache.fineract.infrastructure.jobs.annotation.CronTarget;
+import org.apache.fineract.infrastructure.jobs.data.PostmarkRequestData;
+import org.apache.fineract.infrastructure.jobs.data.PostmarkModel;
 import org.apache.fineract.infrastructure.jobs.exception.JobExecutionException;
 import org.apache.fineract.infrastructure.jobs.service.JobName;
 import org.apache.fineract.organisation.office.data.OfficeData;
 import org.apache.fineract.organisation.office.exception.OfficeNotFoundException;
 import org.apache.fineract.organisation.office.service.OfficeReadPlatformService;
+import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
+import org.apache.fineract.portfolio.loanaccount.data.LoanAccountData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
+import org.apache.fineract.portfolio.loanaccount.loanschedule.data.SoonToBeDueLoanScheduleData;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.util.CollectionUtils;
+import org.springframework.web.client.RestTemplate;
 
 @Service
 public class LoanSchedularServiceImpl implements LoanSchedularService {
@@ -62,16 +75,21 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     private final LoanReadPlatformService loanReadPlatformService;
     private final LoanWritePlatformService loanWritePlatformService;
     private final OfficeReadPlatformService officeReadPlatformService;
+    private final ClientReadPlatformService clientReadPlatformService;
     private final ApplicationContext applicationContext;
+    @Value("${postmark.token}")
+    private String ptoken;
 
     @Autowired
     public LoanSchedularServiceImpl(final ConfigurationDomainService configurationDomainService,
             final LoanReadPlatformService loanReadPlatformService, final LoanWritePlatformService loanWritePlatformService,
-            final OfficeReadPlatformService officeReadPlatformService, final ApplicationContext applicationContext) {
+            final OfficeReadPlatformService officeReadPlatformService, final ClientReadPlatformService clientReadPlatformService,
+            final ApplicationContext applicationContext) {
         this.configurationDomainService = configurationDomainService;
         this.loanReadPlatformService = loanReadPlatformService;
         this.loanWritePlatformService = loanWritePlatformService;
         this.officeReadPlatformService = officeReadPlatformService;
+        this.clientReadPlatformService = clientReadPlatformService;
         this.applicationContext = applicationContext;
     }
 
@@ -307,6 +325,79 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
             LOG.error("Interrupted while posting IR entries", e1);
         } catch (ExecutionException e2) {
             LOG.error("Execution exception while posting IR entries", e2);
+        }
+    }
+
+    @Override
+    @CronTarget(jobName = JobName.SEND_EMAIL_FOR_DUE_LOAN_INSTALLMENT)
+    public void sendEmailForSoonDueLoans() throws JobExecutionException {
+        if (this.configurationDomainService.isPriorDaysToRepaymentDueEnabled()) {
+            // 1. Get All loans with installments due in the next "PriorDaysToRepaymentDue"
+            final Long priorDays = this.configurationDomainService.retrievePriorDaysToRepaymentDueEnabled();
+            final Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithSoonDueInstallments(priorDays.intValue());
+
+            // Get email address of clients with corresponding loans
+            List<Throwable> exceptions = new ArrayList<>();
+            if (!soonToBeDueLoanScheduleInstallments.isEmpty()) {
+                for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
+                    Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
+                    String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
+
+                    try {
+                        sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment);
+                    } catch (final PlatformApiDataValidationException e) {
+                        final List<ApiParameterError> errors = e.getErrors();
+                        for (final ApiParameterError error : errors) {
+                            LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
+                                    error.getDeveloperMessage(), e);
+                        }
+                        exceptions.add(e);
+                    } catch (final AbstractPlatformDomainRuleException e) {
+                        LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
+                                e.getDefaultUserMessage(), e);
+                        exceptions.add(e);
+                    } catch (Exception e) {
+                        LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId, e);
+                        exceptions.add(e);
+                    }
+                }
+                if (!exceptions.isEmpty()) {
+                    throw new JobExecutionException(exceptions);
+                }
+            }
+        }
+    }
+
+    public void sendEmailWithTemplate(String emailAddress, SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment) {
+        try {
+            LoanAccountData loanAccountData = this.loanReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getLoanId());
+            String clientName = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getDisplayName();
+            String loanAccountNumber = loanAccountData.getAccountNo();
+            String currencyCode = loanAccountData.getCurrency().getCode();
+            String dueDate = soonToBeDueLoanScheduleInstallment.getDueDate();
+            Integer periodNumber = soonToBeDueLoanScheduleInstallment.getPeriodNumber();
+            Integer numberOfRepayments = loanAccountData.getNumberOfRepayments();
+            BigDecimal principalDue = soonToBeDueLoanScheduleInstallment.getPrincipalOutstanding();
+            BigDecimal interestDue = soonToBeDueLoanScheduleInstallment.getInterestOutstanding();
+            BigDecimal totalDue = principalDue.add(interestDue);
+
+            PostmarkModel templateModel = new PostmarkModel(String.valueOf(totalDue), currencyCode, clientName, loanAccountNumber, String.valueOf(periodNumber),
+                    String.valueOf(numberOfRepayments), dueDate, String.valueOf(principalDue), String.valueOf(interestDue));
+            PostmarkRequestData postmarkRequestData = new PostmarkRequestData("support@credilinq.ai", emailAddress, "upcoming-repayment", templateModel);
+
+            RestTemplate restTemplate = new RestTemplate();
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("X-Postmark-Server-Token", ptoken);
+            ObjectMapper mapper = new ObjectMapper();
+            HttpEntity<String> request = new HttpEntity<String>(mapper.writeValueAsString(postmarkRequestData), headers);
+
+            String url = "https://api.postmarkapp.com/email/withTemplate";
+            restTemplate.postForObject(url, request, PostmarkRequestData.class);
+        }
+
+        catch (RuntimeException | JsonProcessingException e) {
+            // handle the exception
+            LOG.error("Problem occurred in sendEmailWithTemplate function", e);
         }
     }
 }

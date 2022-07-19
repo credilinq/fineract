@@ -19,9 +19,13 @@
 package org.apache.fineract.infrastructure.campaigns.email.service;
 
 import org.apache.fineract.infrastructure.campaigns.email.data.EmailMessageWithAttachmentData;
+import org.apache.fineract.infrastructure.configuration.data.SMTPCredentialsData;
+import org.springframework.mail.javamail.JavaMailSenderImpl;
 
 public interface EmailMessageJobEmailService {
 
     void sendEmailWithAttachment(EmailMessageWithAttachmentData emailMessageWithAttachmentData);
+
+    JavaMailSenderImpl setupBaseEmailConfig(SMTPCredentialsData smtpCredentialsData);
 
 }
