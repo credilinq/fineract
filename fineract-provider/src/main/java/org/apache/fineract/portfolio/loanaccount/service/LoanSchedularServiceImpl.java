@@ -55,6 +55,7 @@ import org.apache.fineract.portfolio.loanaccount.loanschedule.data.SoonToBeDueLo
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationContext;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpEntity;
@@ -76,7 +77,8 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     private final OfficeReadPlatformService officeReadPlatformService;
     private final ClientReadPlatformService clientReadPlatformService;
     private final ApplicationContext applicationContext;
-
+    @Value("${postmark.token}")
+    private String ptoken;
 
     @Autowired
     public LoanSchedularServiceImpl(final ConfigurationDomainService configurationDomainService,
@@ -385,7 +387,7 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
 
             RestTemplate restTemplate = new RestTemplate();
             HttpHeaders headers = new HttpHeaders();
-            headers.set("X-Postmark-Server-Token", "f3d0a020-bfa2-4a21-9e7e-ba6f681203dc");
+            headers.set("X-Postmark-Server-Token", ptoken);
             ObjectMapper mapper = new ObjectMapper();
             HttpEntity<String> request = new HttpEntity<String>(mapper.writeValueAsString(postmarkRequestData), headers);
 
