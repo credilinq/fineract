@@ -28,6 +28,7 @@ import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.temporal.ChronoField;
 import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Date;
@@ -37,6 +38,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+
+import org.apache.commons.lang3.Range;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.fineract.infrastructure.configuration.domain.ConfigurationDomainService;
 import org.apache.fineract.infrastructure.core.data.ApiParameterError;
@@ -276,6 +279,19 @@ public class LoanScheduleAssembler {
         if (calculatedRepaymentsStartingFromDate == null) {
             calculatedRepaymentsStartingFromDate = deriveFirstRepaymentDate(loanType, repaymentEvery, expectedDisbursementDate,
                     repaymentPeriodFrequencyType, loanProduct.getMinimumDaysBetweenDisbursalAndFirstRepayment(), calendar);
+            if (repaymentFrequencyType.equals(PeriodFrequencyType.MONTHS.getValue())) {
+                Integer autoStartDayOfMonth = calculatedRepaymentsStartingFromDate.getDayOfMonth();
+                Range<Integer> Range1 = Range.between(1, 10);
+                Range<Integer> Range2 = Range.between(11, 20);
+                Range<Integer> Range3 = Range.between(21, 31);
+                if (Range1.contains(autoStartDayOfMonth)) {
+                    calculatedRepaymentsStartingFromDate = calculatedRepaymentsStartingFromDate.withDayOfMonth(10);
+                } else if (Range2.contains(autoStartDayOfMonth)) {
+                    calculatedRepaymentsStartingFromDate = calculatedRepaymentsStartingFromDate.withDayOfMonth(20);
+                } else if (Range3.contains(autoStartDayOfMonth)) {
+                    calculatedRepaymentsStartingFromDate = calculatedRepaymentsStartingFromDate.with(TemporalAdjusters.lastDayOfMonth());
+                }
+            }
         }
 
         /*
