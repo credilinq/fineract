@@ -53,6 +53,8 @@ import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
 import org.apache.fineract.portfolio.loanaccount.data.LoanAccountData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.SoonToBeDueLoanScheduleData;
+import org.apache.fineract.useradministration.data.AppUserData;
+import org.apache.fineract.useradministration.service.AppUserReadPlatformService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -78,6 +80,7 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     private final OfficeReadPlatformService officeReadPlatformService;
     private final ClientReadPlatformService clientReadPlatformService;
     private final ApplicationContext applicationContext;
+    private final AppUserReadPlatformService appUserReadPlatformService;
     @Value("${postmark.token}")
     private String ptoken;
 
@@ -85,13 +88,14 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     public LoanSchedularServiceImpl(final ConfigurationDomainService configurationDomainService,
             final LoanReadPlatformService loanReadPlatformService, final LoanWritePlatformService loanWritePlatformService,
             final OfficeReadPlatformService officeReadPlatformService, final ClientReadPlatformService clientReadPlatformService,
-            final ApplicationContext applicationContext) {
+            final ApplicationContext applicationContext, final AppUserReadPlatformService appUserReadPlatformService) {
         this.configurationDomainService = configurationDomainService;
         this.loanReadPlatformService = loanReadPlatformService;
         this.loanWritePlatformService = loanWritePlatformService;
         this.officeReadPlatformService = officeReadPlatformService;
         this.clientReadPlatformService = clientReadPlatformService;
         this.applicationContext = applicationContext;
+        this.appUserReadPlatformService = appUserReadPlatformService;
     }
 
     @Override
@@ -333,6 +337,7 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     @CronTarget(jobName = JobName.SEND_EMAIL_FOR_DUE_LOAN_INSTALLMENT)
     public void sendEmailForSoonDueLoans() throws JobExecutionException {
         String templateAlias = "upcoming-repayment";
+
         if (this.configurationDomainService.isPriorDaysToRepaymentDueEnabled()) {
             // 1. Get All loans with installments due in the next "PriorDaysToRepaymentDue"
             final Long priorDays = this.configurationDomainService.retrievePriorDaysToRepaymentDueEnabled();
@@ -370,8 +375,20 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
             for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
                 Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
                 String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
-
                 try {
+                    // send to organization users
+                    final Collection<AppUserData> users = this.appUserReadPlatformService.retrieveAllUsers();
+                    final List<String> emails = new ArrayList<>();
+                    for(AppUserData user: users) {
+                        if(!emails.contains(user.getEmail())) {
+                            emails.add(user.getEmail());
+                        }
+                    }
+                    for(String userEmail: emails) {
+                        sendEmailWithTemplate(userEmail, soonToBeDueLoanScheduleInstallment, templateAlias);
+                    }
+
+                    // send to client
                     sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment, templateAlias);
                 } catch (final PlatformApiDataValidationException e) {
                     final List<ApiParameterError> errors = e.getErrors();

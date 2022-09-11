@@ -172,4 +172,7 @@ public final class AppUserData {
         return this.isSelfServiceUser == null ? false : this.isSelfServiceUser;
     }
 
+    public String getEmail() {
+        return this.email;
+    }
 }
