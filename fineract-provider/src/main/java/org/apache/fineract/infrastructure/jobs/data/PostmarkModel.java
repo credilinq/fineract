@@ -22,6 +22,7 @@ public class PostmarkModel {
     public String total_amount;
     public String currency_code;
     public String client_name;
+    public String clientUEN;
     public String loan_account_number;
     public String installment_number;
     public String total_installments;
@@ -31,12 +32,13 @@ public class PostmarkModel {
 
     public PostmarkModel() {}
 
-    public PostmarkModel(String total_amount, String currency_code, String client_name, String loan_account_number,
+    public PostmarkModel(String total_amount, String currency_code, String client_name, String clientUEN, String loan_account_number,
                          String installment_number, String total_installments, String installment_due_date,
                          String installment_principal, String installment_interest) {
         this.total_amount = total_amount;
         this.currency_code = currency_code;
         this.client_name = client_name;
+        this.clientUEN = clientUEN;
         this.loan_account_number = loan_account_number;
         this.installment_number = installment_number;
         this.total_installments = total_installments;

@@ -48,6 +48,7 @@ import org.apache.fineract.infrastructure.jobs.service.JobName;
 import org.apache.fineract.organisation.office.data.OfficeData;
 import org.apache.fineract.organisation.office.exception.OfficeNotFoundException;
 import org.apache.fineract.organisation.office.service.OfficeReadPlatformService;
+import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
 import org.apache.fineract.portfolio.loanaccount.data.LoanAccountData;
 import org.apache.fineract.portfolio.loanaccount.loanschedule.data.OverdueLoanScheduleData;
@@ -331,47 +332,75 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
     @Override
     @CronTarget(jobName = JobName.SEND_EMAIL_FOR_DUE_LOAN_INSTALLMENT)
     public void sendEmailForSoonDueLoans() throws JobExecutionException {
+        String templateAlias = "upcoming-repayment";
         if (this.configurationDomainService.isPriorDaysToRepaymentDueEnabled()) {
             // 1. Get All loans with installments due in the next "PriorDaysToRepaymentDue"
             final Long priorDays = this.configurationDomainService.retrievePriorDaysToRepaymentDueEnabled();
-            final Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithSoonDueInstallments(priorDays.intValue());
+            final Long defaultPriorDays = Long.valueOf(7);
+            Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments;
 
-            // Get email address of clients with corresponding loans
-            List<Throwable> exceptions = new ArrayList<>();
-            if (!soonToBeDueLoanScheduleInstallments.isEmpty()) {
-                for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
-                    Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
-                    String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
+            // for priorDays, default(7), send email
+            final List<Long> priorDayIntervals = new ArrayList<>();
+            priorDayIntervals.add(priorDays);
+            priorDayIntervals.add(defaultPriorDays);
+            for (Long day: priorDayIntervals) {
+                if (day == 7) {
+                    templateAlias = "upcoming-week-repayment";
+                }
+                soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithSoonDueInstallments(day.intValue());
+                if(!soonToBeDueLoanScheduleInstallments.isEmpty()) {
+                    getEmailAddress(soonToBeDueLoanScheduleInstallments, templateAlias);
+                }
+            }
+        }
 
-                    try {
-                        sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment);
-                    } catch (final PlatformApiDataValidationException e) {
-                        final List<ApiParameterError> errors = e.getErrors();
-                        for (final ApiParameterError error : errors) {
-                            LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
-                                    error.getDeveloperMessage(), e);
-                        }
-                        exceptions.add(e);
-                    } catch (final AbstractPlatformDomainRuleException e) {
+        if (this.configurationDomainService.isPostDaysToRepaymentDueEnabled()) {
+            // 1. Get All loans with installments due in the next "PostDaysToRepaymentDue"
+            final Long postDays = this.configurationDomainService.retrievePostDaysToRepaymentDueEnabled();
+            templateAlias = "overdue-repayment";
+            Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments = this.loanReadPlatformService.retrieveAllLoansWithOverdueInstallments(postDays.intValue());
+            getEmailAddress(soonToBeDueLoanScheduleInstallments, templateAlias);
+        }
+    }
+
+    public void getEmailAddress(Collection<SoonToBeDueLoanScheduleData> soonToBeDueLoanScheduleInstallments, String templateAlias) throws JobExecutionException {
+        // Get email address of clients with corresponding loans
+        List<Throwable> exceptions = new ArrayList<>();
+        if (!soonToBeDueLoanScheduleInstallments.isEmpty()) {
+            for (SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment : soonToBeDueLoanScheduleInstallments) {
+                Long loanId = soonToBeDueLoanScheduleInstallment.getLoanId();
+                String emailAddress = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getEmailAddress();
+
+                try {
+                    sendEmailWithTemplate(emailAddress, soonToBeDueLoanScheduleInstallment, templateAlias);
+                } catch (final PlatformApiDataValidationException e) {
+                    final List<ApiParameterError> errors = e.getErrors();
+                    for (final ApiParameterError error : errors) {
                         LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
-                                e.getDefaultUserMessage(), e);
-                        exceptions.add(e);
-                    } catch (Exception e) {
-                        LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId, e);
-                        exceptions.add(e);
+                                error.getDeveloperMessage(), e);
                     }
+                    exceptions.add(e);
+                } catch (final AbstractPlatformDomainRuleException e) {
+                    LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId,
+                            e.getDefaultUserMessage(), e);
+                    exceptions.add(e);
+                } catch (Exception e) {
+                    LOG.error("Send email for soon due loans failed for loan account {} with message: {}", loanId, e);
+                    exceptions.add(e);
                 }
-                if (!exceptions.isEmpty()) {
-                    throw new JobExecutionException(exceptions);
-                }
+            }
+            if (!exceptions.isEmpty()) {
+                throw new JobExecutionException(exceptions);
             }
         }
     }
 
-    public void sendEmailWithTemplate(String emailAddress, SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment) {
+    public void sendEmailWithTemplate(String emailAddress, SoonToBeDueLoanScheduleData soonToBeDueLoanScheduleInstallment, String templateAlias) {
         try {
             LoanAccountData loanAccountData = this.loanReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getLoanId());
-            String clientName = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId()).getDisplayName();
+            ClientData client = this.clientReadPlatformService.retrieveOne(soonToBeDueLoanScheduleInstallment.getClientId());
+            String clientName = client.getDisplayName();
+            String clientUEN = client.getExternalId();
             String loanAccountNumber = loanAccountData.getAccountNo();
             String currencyCode = loanAccountData.getCurrency().getCode();
             String dueDate = soonToBeDueLoanScheduleInstallment.getDueDate();
@@ -381,9 +410,9 @@ public class LoanSchedularServiceImpl implements LoanSchedularService {
             BigDecimal interestDue = soonToBeDueLoanScheduleInstallment.getInterestOutstanding();
             BigDecimal totalDue = principalDue.add(interestDue);
 
-            PostmarkModel templateModel = new PostmarkModel(String.valueOf(totalDue), currencyCode, clientName, loanAccountNumber, String.valueOf(periodNumber),
+            PostmarkModel templateModel = new PostmarkModel(String.valueOf(totalDue), currencyCode, clientName, clientUEN, loanAccountNumber, String.valueOf(periodNumber),
                     String.valueOf(numberOfRepayments), dueDate, String.valueOf(principalDue), String.valueOf(interestDue));
-            PostmarkRequestData postmarkRequestData = new PostmarkRequestData("support@credilinq.ai", emailAddress, "upcoming-repayment", templateModel);
+            PostmarkRequestData postmarkRequestData = new PostmarkRequestData("CrediLinq Support <support@credilinq.ai>", emailAddress, templateAlias, templateModel);
 
             RestTemplate restTemplate = new RestTemplate();
             HttpHeaders headers = new HttpHeaders();

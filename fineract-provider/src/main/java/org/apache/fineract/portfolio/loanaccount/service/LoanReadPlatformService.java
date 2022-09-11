@@ -155,4 +155,6 @@ public interface LoanReadPlatformService {
     CollectionData retrieveLoanCollectionData(Long loanId);
 
     Collection<SoonToBeDueLoanScheduleData> retrieveAllLoansWithSoonDueInstallments(Integer priorDays);
+
+    Collection<SoonToBeDueLoanScheduleData> retrieveAllLoansWithOverdueInstallments(Integer postDays);
 }
