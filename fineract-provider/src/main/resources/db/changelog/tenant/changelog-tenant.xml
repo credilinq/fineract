@@ -34,4 +34,5 @@
     <include file="parts/0012_add_merchantissuedrefund_payoutrefund_goodwillcredit_permissions.xml" relativeToChangelogFile="true"/>
     <include file="parts/0013_remove_topics.xml" relativeToChangelogFile="true"/>
     <include file="parts/0014_create_email_client_job.xml" relativeToChangelogFile="true"/>
+    <include file="parts/0015_overdue_payment_email.xml" relativeToChangelogFile="true" />
 </databaseChangeLog>

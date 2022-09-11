@@ -2467,4 +2467,17 @@ public class LoanReadPlatformServiceImpl implements LoanReadPlatformService {
                 .append(" and ml.loan_status_id = 300 ");
         return this.jdbcTemplate.query(sqlBuilder.toString(), rm, new Object[]{priorDays});
     }
+
+    @Override
+    public Collection<SoonToBeDueLoanScheduleData> retrieveAllLoansWithOverdueInstallments(Integer postDays) {
+        final SoonToBeDueLoanScheduleMapper rm = new SoonToBeDueLoanScheduleMapper();
+
+        final StringBuilder sqlBuilder = new StringBuilder(400);
+
+        // Only apply for duedate = "postDays" before today and loan is active
+        sqlBuilder.append("select ").append(rm.schema())
+                .append(" where " + "ls.duedate = " + sqlGenerator.subDate(sqlGenerator.currentDate(), "?", "day"))
+                .append(" and ml.loan_status_id = 300 ");
+        return this.jdbcTemplate.query(sqlBuilder.toString(), rm, new Object[]{postDays});
+    }
 }

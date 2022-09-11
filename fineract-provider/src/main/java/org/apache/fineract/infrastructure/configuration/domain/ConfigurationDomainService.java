@@ -116,4 +116,8 @@ public interface ConfigurationDomainService {
     boolean isPriorDaysToRepaymentDueEnabled();
 
     Long retrievePriorDaysToRepaymentDueEnabled();
+
+    boolean isPostDaysToRepaymentDueEnabled();
+
+    Long retrievePostDaysToRepaymentDueEnabled();
 }
